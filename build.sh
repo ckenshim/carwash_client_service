@@ -1,0 +1,1 @@
+g++ -I/usr/local/include cam_worker.cpp ipcam_video_acquisition.cpp -lavformat -lavcodec -lavutil -lswscale -lm -lz -lpthread -lswresample -lrt
