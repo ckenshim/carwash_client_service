@@ -51,7 +51,7 @@ int main(int argc, char* argv[])
     bool work_ = true;
     vae::VideoAcquisition* ipcam_ = new vae::IpCamVideoAcquisition();
     std::string url = camera.video_source();
-    ipcam_->set_url(url);
+    ipcam_->set_url("rtsp://admin:ABYas2013@192.168.1.102:554/cam/realmonitor");
 
     if(ipcam_->Init() != 0){
         std::cout << "Error: Initialization failed.\n";
@@ -185,7 +185,7 @@ bool doRequest(Poco::Net::HTTPSClientSession& session, Poco::Net::HTTPRequest& r
 
 		if(!urlSafeKey.isEmpty() && urlSafeKey.isString()){
 			cam.set_websafe_url(urlSafeKey.toString());
-			std::cout << "urlSafeKey: " << urlSafeKey.toString() << "\n";
+			std::cout << "urlSafeKey: " << cam.websafe_url() << "\n";
 		}
 		
 		if(!isActive.isEmpty() && isActive.isBoolean()){
