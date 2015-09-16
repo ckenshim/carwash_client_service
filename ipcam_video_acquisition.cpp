@@ -32,14 +32,15 @@ int IpCamVideoAcquisition::Init()
             std::cout << "Error: URL of the video source is empty\n";
             return -2;
         }
-	std::cout << "Registering all codecs: av_register_all()\n";
+	std::cout << "Registering all codecs: av_register_all() ...\n";
         av_register_all();
+	std::cout << "Network init...\n";
         avformat_network_init();
 
         av_dict_set(&optionsDict_, "rtsp_transport", "tcp", 0);
         //av_dict_set(&optionsDict_, "r", "25", 0);
 
-
+	std::cout << "Opening video source...\n";
         // Open video source
         if (avformat_open_input(&pFormatCtx_, url_.c_str(), NULL, &optionsDict_) != 0){
 	    std::cout << "Error: Couldn't open video source : " << url_ << "\n";
@@ -76,7 +77,7 @@ int IpCamVideoAcquisition::Init()
 	    std::cout << "Error: Unsupported codec.\n";
             return -1;
         }
-
+	std::cout << "Opening codec...\n";
         // Open codec
         if (avcodec_open2(pCodecCtx_, pCodec_, &optionsDict_)<0){
 	    std::cout << "Error: Could not open codec\n";

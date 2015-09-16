@@ -24,7 +24,7 @@ Camera::Camera(	const std::string & camera_id,
 {}
 
 
-std::string Camera::camera_id() const
+std::string Camera::camera_id()
 {
 	return camera_id_;
 }
@@ -35,7 +35,7 @@ void Camera::set_camera_id(const std::string & camera_id)
 }
 
 
-std::string Camera::websafe_url() const
+std::string Camera::websafe_url()
 {
 	return websafe_url_;
 }
@@ -46,7 +46,7 @@ void Camera::set_websafe_url(const std::string & websafe_url)
 }
     
 
-std::string Camera::video_source() const
+std::string Camera::video_source()
 {
 	return video_source_;
 }
@@ -57,7 +57,7 @@ void Camera::set_video_source(const std::string & video_source)
 }
 
 
-bool Camera::is_active() const
+bool Camera::is_active()
 {
 	return is_active_;
 }
@@ -67,7 +67,7 @@ void Camera::set_active(const bool & is_active)
 	is_active_=is_active;
 }
 
-int Camera::motion_threshold() const
+int Camera::motion_threshold()
 {
 	return motion_threshold_;
 }

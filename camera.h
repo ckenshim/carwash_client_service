@@ -22,21 +22,21 @@ public:
 		const int & motion_threshold);
     ~Camera() {};
 
-    std::string camera_id() const;
+    std::string camera_id();
     void set_camera_id(const std::string & camera_id);
 	
-    std::string websafe_url() const;
+    std::string websafe_url();
     void set_websafe_url(const std::string & websafe_url);
     
 
-    std::string video_source() const;
+    std::string video_source();
     void set_video_source(const std::string & video_source);
 
 
-    bool is_active() const;
+    bool is_active();
     void set_active(const bool & is_active);
 
-    int motion_threshold() const;
+    int motion_threshold();
     void set_motion_threshold(const int & motion_threshold);
 
 };

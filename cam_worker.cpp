@@ -1,214 +1,223 @@
-
 #include <iostream>
 #include "ipcam_video_acquisition.h"
 #include "camera.h"
 #include <opencv2/opencv.hpp>
-#include <math.h>
 #include <ctime>
 #include <chrono>
-#include <sstream>
 #include <string>
-#include "Poco/Net/HTTPSClientSession.h"
-#include "Poco/Net/HTTPRequest.h"
-#include "Poco/Net/HTTPResponse.h"
-#include "Poco/Net/Context.h"
-#include "Poco/JSON/Object.h"
-#include "Poco/JSON/Parser.h"
-#include "Poco/Dynamic/Var.h"
+#include <Poco/JSON/Object.h>
+#include <Poco/JSON/Parser.h>
 #include <Poco/Net/HTTPCredentials.h>
-#include "Poco/StreamCopier.h"
-#include "Poco/NullStream.h"
-#include "Poco/Path.h"
-#include "Poco/URI.h"
-#include "Poco/Exception.h"
+#include <Poco/Exception.h>
+#include <Poco/SimpleFileChannel.h>
+#include <Poco/ConsoleChannel.h>
+#include <Poco/SplitterChannel.h>
+#include <Poco/FormattingChannel.h>
+#include <Poco/PatternFormatter.h>
+#include <Poco/File.h>
+#include <Poco/Logger.h>
+#include <Poco/URI.h>
+#include <Poco/AutoPtr.h>
+#include <Poco/StreamCopier.h>
+#include <fstream>
 
 
-using Poco::Net::HTTPSClientSession;
-using Poco::Net::HTTPRequest;
-using Poco::Net::HTTPResponse;
-using Poco::Net::HTTPMessage;
-using Poco::StreamCopier;
-using Poco::Path;
-using Poco::URI;
-using Poco::Exception;
 using namespace std::chrono;
 
+void parseJSON(const std::string & str_json, Camera &camera, Poco::Logger & logger);
+bool readSettingsFile(const std::string & file_name, Camera & camera, Poco::Logger & logger );
 
-bool doRequest(Poco::Net::HTTPSClientSession& session, Poco::Net::HTTPRequest& request, Poco::Net::HTTPResponse& response, Camera & cam);
-void ObtainCameraSettings(const std::string & camera_id, Camera & cam);
-
+const std::string SETTINGS_DIR = "settings/";
+const std::string IMAGES_DIR = "images/";
 
 int main(int argc, char* argv[])
 {
-    if (argc < 2){
-	std::cout << "usage: camworker [camera_id]\n";
+    if (argc != 4){
+        std::cout << "usage: camworker [id]\n";
         return -1;
     }
 
-    Camera camera;
-    ObtainCameraSettings(argv[1], camera);
+    // *** Logger settings ****
+    Poco::AutoPtr<Poco::PatternFormatter> pPF(new Poco::PatternFormatter);
+    pPF->setProperty("pattern", "%Y-%m-%d %H:%M:%S %s: %t");
+
+    Poco::AutoPtr<Poco::ConsoleChannel> pCons(new Poco::ConsoleChannel);
+    Poco::AutoPtr<Poco::FormattingChannel> pFC(new Poco::FormattingChannel(pPF, pCons));
+
+    Poco::AutoPtr<Poco::SimpleFileChannel> pFile(new Poco::SimpleFileChannel);
+    pFile->setProperty("path", "camworker_" + std::string(argv[1]) +".log");
+    pFile->setProperty("rotation", "1 M");
+    Poco::AutoPtr<Poco::FormattingChannel> pFF(new Poco::FormattingChannel(pPF, pFile));
+
+    Poco::AutoPtr<Poco::SplitterChannel> pSplitter(new Poco::SplitterChannel);
+    pSplitter->addChannel(pFC);
+    //pSplitter->addChannel(pFF);
+
+    Poco::Logger::root().setChannel(pSplitter);
+    Poco::Logger::root().setLevel("debug");
+
+    Poco::Logger &logger_ = Poco::Logger::get("main");
+    // ******************************
+
+
+    std::string cam_id(argv[1]);
+
+    int threshold = std::stoi(argv[3]);
 
     bool work_ = true;
     vae::VideoAcquisition* ipcam_ = new vae::IpCamVideoAcquisition();
-    std::string url = camera.video_source();
-    ipcam_->set_url("rtsp://admin:ABYas2013@192.168.1.102:554/cam/realmonitor");
+    ipcam_->set_url(argv[2]);
 
     if(ipcam_->Init() != 0){
-        std::cout << "Error: Initialization failed.\n";
+        logger_.error( "Error: Initialization failed.");
         return -1;
     }
-	
+
     cv::Ptr<cv::BackgroundSubtractor> mog = cv::createBackgroundSubtractorMOG2();
     cv::Mat kernel = cv::getStructuringElement(cv::MORPH_ELLIPSE, cv::Size(3, 3));
-    cv::Mat kernel_close = cv::getStructuringElement(cv::MORPH_ELLIPSE, cv::Size(6, 6));
 
     cv::Mat im_gray;
-    cv::Mat edges;
     cv::Mat frame_small;
-    int counter = 0;
 
-    AVFrame* pframe = NULL;
-    while(work_){
+    int counter = 0;
+    int target_small_w = 50;
+    int target_upload_w = 700;
+
+    float resize_ratio = 0;
+    float aspect_ratio = 0;
+    int total_pixels = 0;
+
+   AVFrame* pframe = NULL;
+
+
+   while(work_){
 
         pframe = ipcam_->NextFrame();
-
+	
         if(pframe!=NULL){
-	   cv::Mat image(pframe->height, pframe->width, CV_8UC3, pframe->data[0]);
-	   int new_w = image.size().width / 6;
-	   int new_h = image.size().height / 6;
-	   cv::resize(image, frame_small, cv::Size(new_w, new_h));
-	   
-	   cvtColor(frame_small, im_gray, CV_BGR2GRAY);
+	    counter++;
+	    logger_.information(std::to_string(counter));
+	    //if(counter%100==0){
+		//logger_.information(std::to_string(counter));
+		//logger_.information(std::to_string(pframe->width)+":"+std::to_string(pframe->height));
+            //}
 
-	   cv::Mat mask;
-           mog->apply(im_gray, mask);
-	   
-	   //cv::Mat morph;
+            cv::Mat image(pframe->height, pframe->width, CV_8UC3, pframe->data[0]);
+	    if(resize_ratio==0)
+	        resize_ratio = (float)target_small_w / (float)image.size().width;
 
-	   cv::morphologyEx(mask, mask, cv::MORPH_OPEN, kernel);
-	   //cv::morphologyEx(mask, mask, cv::MORPH_CLOSE, kernel_close);
-	   //cv::morphologyEx(morph, morph, cv::MORPH_OPEN, kernel_close);
-           
-	   //GaussianBlur(edges, edges, cv::Size(7, 7), 1.5, 1.5);
-			
-	   int blob = 0;
+	    if(aspect_ratio==0)
+		aspect_ratio = (float)image.size().height / (float)image.size().width;
 
-	   for (int i = 0; i < new_h; i++){
-	       for (int j = 0; j < new_w; j++){
-		    uchar value = mask.at<uchar>(i, j);
-		    if (value != 0){
-		        blob++;
-		    }
-		}
+            int new_h = (int)(target_small_w * aspect_ratio);
+            cv::resize(image, frame_small, cv::Size(target_small_w, new_h));
+
+	    if(total_pixels==0)
+	        total_pixels = target_small_w * new_h;
+            cvtColor(frame_small, im_gray, CV_BGR2GRAY);
+
+            cv::Mat mask;
+            mog->apply(im_gray, mask);
+
+
+            cv::morphologyEx(mask, mask, cv::MORPH_OPEN, kernel);
+
+            int blob = 0;
+
+            for (int i = 0; i < new_h; i++){
+                for (int j = 0; j < target_small_w; j++){
+                    uchar value = mask.at<uchar>(i, j);
+                    if (value != 0){
+                        blob++;
+                    }
+                }
             }
-  	    if (blob > 1500){
-	        std::cout << blob << "\n";
-		milliseconds ms = duration_cast<milliseconds>(system_clock::now().time_since_epoch());
-		cv::imwrite("5E5311FA-B1A1-472D_" + std::to_string(ms.count()) + ".jpg", image);
-	    }
-	    //imshow("morph", mask);
-	    //imshow("real", frame);
-	    //if (cv::waitKey(1) >= 0) break;
+
+	    cv::imshow("mask", mask);
+	    if(cv::waitKey(30)>=0) break;
+	    int relative_blob = (int) (((float)blob/(float)total_pixels) * 100);
+
+            if (relative_blob > threshold){
+                //logger_.information(std::to_string(relative_blob) + "/" + std::to_string(blob));
+                milliseconds ms = duration_cast<milliseconds>(system_clock::now().time_since_epoch());
+		cv::Mat final_image;
+		cv::resize(image, final_image, cv::Size(target_upload_w, (int)(target_upload_w * aspect_ratio)));
+                cv::imwrite(IMAGES_DIR + cam_id + "_" + std::to_string(ms.count()) + ".jpg", final_image);
+            }
+
         }
+	else{
+		logger_.error("Null frame");
+	}
     }
     return 0;
 }
 
+bool readSettingsFile(const std::string & file_name, Camera & camera, Poco::Logger & logger ){
 
+    try {
+        std::ifstream ifs(file_name);
 
-void ObtainCameraSettings(const std::string & camera_id, Camera & cam)
-{
-	try
-	{
-		std::string url = "https://image-receiver-dot-carwashauthority-1007.appspot.com/_ah/api/imagereceiverendpoints/v1/discoverCamera?val=" + camera_id;
-		
-		URI uri(url);
-		std::string path(uri.getPathAndQuery());
-		if (path.empty()) path = "/";
+        std::string str_json((std::istreambuf_iterator<char>(ifs)), std::istreambuf_iterator<char>());
+        //parseJSON(str_json, camera, logger);
 
-		const Poco::Net::Context::Ptr ptrContext( new Poco::Net::Context( Poco::Net::Context::CLIENT_USE, "", "", "", Poco::Net::Context::VERIFY_RELAXED, 9, true, "ALL:!ADH:!LOW:!EXP:!MD5:@STRENGTH" ) );
-		HTTPSClientSession session(uri.getHost(), uri.getPort(), ptrContext);
-		HTTPRequest request(HTTPRequest::HTTP_GET, path, HTTPMessage::HTTP_1_1);
-		HTTPResponse response;
-		for (int i=0;i<5;i++){
-			std::cout << "Sending request to server...\n";
-			bool success = doRequest(session, request, response, cam);
-			if(success){
-				std::cout << "Success.\n";				
-				break;
-			}
-			else{
-				std::cout << "Failure. Repeating request...\n";
-			}
-		}	
-		
-	}
-	catch (Exception& exc)
-	{
-		std::cerr << exc.displayText() << std::endl;
-		
-	}
+        return true;
+
+    }
+    catch (Poco::Exception& exc)
+    {
+        logger.error("Error: " + exc.displayText());
+        logger.error("Error: " + exc.message());
+    }
+
+    return false;
 
 }
 
-bool doRequest(Poco::Net::HTTPSClientSession& session, Poco::Net::HTTPRequest& request, Poco::Net::HTTPResponse& response, Camera & cam)
-{
-	session.sendRequest(request);
-	std::istream& rs = session.receiveResponse(response);
-	std::cout << response.getStatus() << " " << response.getReason() << std::endl;
-	if (response.getStatus() == Poco::Net::HTTPResponse::HTTP_OK)
-	{
-		std::ostringstream oss;
-		StreamCopier::copyStream(rs, oss);
-		
-		std::string response = oss.str();
+void parseJSON(const std::string & str_json, Camera &camera, Poco::Logger& logger) {
+    Poco::JSON::Parser parser;
+    Poco::Dynamic::Var result = parser.parse(str_json);
+    Poco::JSON::Object::Ptr object = result.extract<Poco::JSON::Object::Ptr>();
+    Poco::Dynamic::Var camId = object->get("cameraId");
+    Poco::Dynamic::Var sourceUrl = object->get("sourceUrl");
+    Poco::Dynamic::Var urlSafeKey = object->get("urlSafeKey");
+    Poco::Dynamic::Var isActive = object->get("isActive");
+    Poco::Dynamic::Var threshold = object->get("threshold");
 
-		Poco::JSON::Parser parser;
-		Poco::Dynamic::Var result = parser.parse(response);
-		Poco::JSON::Object::Ptr object = result.extract<Poco::JSON::Object::Ptr>();
-		Poco::Dynamic::Var camId = object->get("cameraId");
-		Poco::Dynamic::Var sourceUrl = object->get("sourceUrl");
-		Poco::Dynamic::Var urlSafeKey = object->get("urlSafeKey");
-		Poco::Dynamic::Var isActive = object->get("isActive");
-		Poco::Dynamic::Var threshold = object->get("threshold");
+    logger.information("Parsing json settings file...");
 
-		if(!camId.isEmpty() && camId.isString()){
-			cam.set_camera_id(camId.toString());
-			std::cout << "camId: " << camId.toString() << "\n";
-		}
-		
-		if(!sourceUrl.isEmpty() && sourceUrl.isString())
-		{	
-			cam.set_video_source(sourceUrl.toString());
-			std::cout << "sourceUrl: " << sourceUrl.toString() << "\n";
-		}	
+    if (!camId.isEmpty() && camId.isString()) {
+        camera.set_camera_id(camId.toString());
+        logger.information("camId: " + camId.toString());
+    }
 
-		if(!urlSafeKey.isEmpty() && urlSafeKey.isString()){
-			cam.set_websafe_url(urlSafeKey.toString());
-			std::cout << "urlSafeKey: " << cam.websafe_url() << "\n";
-		}
-		
-		if(!isActive.isEmpty() && isActive.isBoolean()){
-			bool val = isActive.convert<bool>();	
-			cam.set_active(val);
-			std::cout << "isActive: " << val << "\n";
-		}
+    if (!sourceUrl.isEmpty() && sourceUrl.isString()) {
+        camera.set_video_source(sourceUrl.toString());
+        logger.information("sourceUrl: " + sourceUrl.toString());
+    }
 
-		if(!threshold.isEmpty() && threshold.isString()){
-			int val = threshold.convert<int>();	
-			cam.set_motion_threshold(val);
-			std::cout << "threshold: " << val << "\n";
-		}
+    if (!urlSafeKey.isEmpty() && urlSafeKey.isString()) {
+        camera.set_websafe_url(urlSafeKey.toString());
+        logger.information("urlSafeKey: " + urlSafeKey.toString() );
+    }
 
-		return true;
-	}
-	else
-	{
-		Poco::NullOutputStream null;
-		StreamCopier::copyStream(rs, null);
-		return false;
-	}
+    if (!isActive.isEmpty() && isActive.isBoolean()) {
+        bool val = isActive.convert<bool>();
+        camera.set_active(val);
+        if(val)
+            logger.information("isActive: true");
+        else
+            logger.information("isActive: false");
+    }
+
+    if (!threshold.isEmpty() && threshold.isString()) {
+        int val = threshold.convert<int>();
+        camera.set_motion_threshold(val);
+        logger.information("threshold: " + std::to_string(val) );
+    }
+
 }
+
 
 
 
